@@ -1,4 +1,4 @@
-// Cloudflare Pages Function: Workers AI + optional KV rate limiter. No user-uploaded file is stored.
+// Cloudflare Pages Function: Gemini quiz batches with KV request throttling. User files are not saved.
 const MODEL='gemini-3.5-flash-lite';
 const QUESTION_SCHEMA={
  type:'object',additionalProperties:false,
@@ -52,7 +52,7 @@ export async function onRequestPost({request,env}){
  const count=Number(input.count);
  const source=clean(input.sourceText,14000),fileName=clean(input.sourceName,120);
  const weaknesses=Array.isArray(input.weaknesses)?input.weaknesses.slice(0,5).map(x=>clean(x,160)).join(' / '):'';
- if(!cert||!subject||![3,5].includes(count))return reply({ok:false,message:'자격증·과목·문제 수를 확인해 주세요.'},400);
+ if(!cert||!subject||![3,5,10,20].includes(count))return reply({ok:false,message:'자격증·과목·문제 수를 확인해 주세요.'},400);
  if(input.useSource && source.length<80)return reply({ok:false,message:'첨부 학습자료에서 80자 이상의 텍스트를 추출해야 합니다.'},400);
  let rate;try{rate=await reserveRate(env,request)}catch{return reply({ok:false,message:'AI 요청량 확인에 실패했습니다.'},503)}
  if(rate.error)return rate.error;
@@ -74,15 +74,14 @@ export async function onRequestPost({request,env}){
  const model=String(env.GEMINI_MODEL||MODEL).trim();
  if(!/^gemini-[a-z0-9.-]{3,75}$/.test(model))return reply({ok:false,code:'GEMINI_MODEL_INVALID',message:'설정한 Gemini 모델 이름이 올바르지 않습니다.'},503);
  const endpoint='https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent';
- // Enforce the requested count. A short Gemini response must never silently start a smaller quiz.
+ // Larger exams are assembled from at most five questions per Gemini request.
+ // Exact count is checked before exposing any answers to the user.
  const baseSchema=QUESTION_SCHEMA.properties.questions;
- let questions=[];
- for(let attempt=0;attempt<2&&questions.length<count;attempt++){
-  const remaining=count-questions.length;
-  const priorQuestions=questions.map(q=>q.question).slice(0,5);
-  const prompt=attempt===0?user:
-   user+'\n추가로 정확히 '+remaining+'개를 새로 작성하세요. 앞서 생성된 질문을 반복하지 마세요:\n'+priorQuestions.map(q=>'- '+q).join('\n');
-  const batchSchema={...QUESTION_SCHEMA,properties:{questions:{...baseSchema,minItems:remaining,maxItems:remaining}}};
+ const chunks=Array.from({length:Math.ceil(count/5)},(_,i)=>Math.min(5,count-i*5));
+ async function requestBatch(n,batchNo,totalBatches,excluded){
+  const prompt=user+'\n현재 배치 '+batchNo+'/'+totalBatches+'입니다. 이번 응답에는 정확히 '+n+'문제만 넣으세요. 다른 배치와 겹치지 않도록 개념과 상황을 다양화하세요.'+
+    (excluded.length?'\n아래 문항과 중복 출제하지 마세요:\n'+excluded.map(x=>'- '+x).join('\n'):'');
+  const batchSchema={...QUESTION_SCHEMA,properties:{questions:{...baseSchema,minItems:n,maxItems:n}}};
   const requestBody={
    systemInstruction:{parts:[{text:system}]},
    contents:[{role:'user',parts:[{text:prompt}]}],
@@ -94,42 +93,56 @@ export async function onRequestPost({request,env}){
     method:'POST',
     headers:{'Content-Type':'application/json','x-goog-api-key':String(env.GEMINI_API_KEY).trim()},
     body:JSON.stringify(requestBody),
-    signal:AbortSignal.timeout(30000)
+    signal:AbortSignal.timeout(35000)
    });
   }catch(_){
-   return reply({ok:false,code:'GEMINI_NETWORK_ERROR',message:'Gemini API 연결이 지연되거나 실패했습니다. 잠시 후 다시 시도해 주세요.'},502);
+   return {error:reply({ok:false,code:'GEMINI_NETWORK_ERROR',message:'Gemini 연결이 지연되거나 실패했습니다. 잠시 후 다시 시도해 주세요.'},502)};
   }
   let payload;
-  try{payload=await response.json()}catch(_){return reply({ok:false,code:'GEMINI_RESPONSE_INVALID',message:'Gemini 서버 응답 형식을 읽을 수 없습니다.'},502)}
+  try{payload=await response.json()}catch(_){return {error:reply({ok:false,code:'GEMINI_RESPONSE_INVALID',message:'Gemini 응답을 해석하지 못했습니다.'},502)}}
   if(!response.ok){
    const errorCode=response.status===429?'GEMINI_QUOTA_EXCEEDED':
     [401,403].includes(response.status)?'GEMINI_AUTH_ERROR':
     response.status===404?'GEMINI_MODEL_NOT_FOUND':
     response.status===400?'GEMINI_BAD_REQUEST':'GEMINI_UPSTREAM_ERROR';
-   const errorMessage=response.status===429?'Gemini 무료 요청 한도에 도달했습니다. AI Studio에서 사용량을 확인하거나 나중에 다시 시도해 주세요.':
-    [401,403].includes(response.status)?'Gemini API 인증에 실패했습니다. AI Studio 키 및 해당 프로젝트의 API 사용 권한을 확인해 주세요.':
-    response.status===404?'선택된 Gemini 모델을 사용할 수 없습니다. GEMINI_MODEL 설정과 프로젝트의 모델 접근 권한을 확인해 주세요.':
-    response.status===400?'Gemini 요청 형식이 지원되지 않습니다. 서버 설정을 확인해 주세요.':
-    'Gemini 서버에서 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.';
-   return reply({ok:false,code:errorCode,message:errorMessage},response.status===429?429:502);
+   const errorMessage=response.status===429?'Gemini 무료 한도에 도달했습니다. 20문제 생성은 여러 번의 Gemini 호출을 사용합니다. 나중에 다시 시도하거나 문제 수를 줄여 주세요.':
+    [401,403].includes(response.status)?'Gemini API 키 및 프로젝트 권한을 확인해 주세요.':
+    response.status===404?'선택한 Gemini 모델을 사용할 수 없습니다. GEMINI_MODEL 설정을 확인해 주세요.':
+    response.status===400?'Gemini 요청 형식을 처리하지 못했습니다. 관리자에게 알려 주세요.':
+    'Gemini 요청 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.';
+   return {error:reply({ok:false,code:errorCode,message:errorMessage},response.status===429?429:502)};
   }
   const candidate=payload?.candidates?.[0];
   const answer=candidate?.content?.parts?.filter(p=>typeof p?.text==='string').map(p=>p.text).join('')||'';
-  if(!answer)continue;
+  if(!answer)return {questions:[]};
   let body;
-  try{body=JSON.parse(answer)}catch(_){continue}
-  const batch=normalizeQuestions(body,remaining,type);
-  const seen=new Set(questions.map(q=>q.question.replace(/\s+/g,'').toLowerCase()));
-  for(const q of batch){
+  try{body=JSON.parse(answer)}catch(_){return {questions:[]}}
+  return {questions:normalizeQuestions(body,n,type)};
+ }
+ // Requests run in small, parallel groups; a limited refill handles malformed/duplicate questions.
+ const results=await Promise.all(chunks.map((n,i)=>requestBatch(n,i+1,chunks.length,[])));
+ const errors=results.find(x=>x.error);
+ if(errors)return errors.error;
+ let questions=[],seen=new Set();
+ function addUnique(list){
+  for(const q of list){
    const signature=q.question.replace(/\s+/g,'').toLowerCase();
-   if(!seen.has(signature)){questions.push(q);seen.add(signature)}
-   if(questions.length===count)break;
+   if(!seen.has(signature)&&questions.length<count){seen.add(signature);questions.push(q)}
   }
+ }
+ results.forEach(x=>addUnique(x.questions||[]));
+ for(let attempt=0;attempt<2&&questions.length<count;attempt++){
+  const n=Math.min(5,count-questions.length);
+  const extra=await requestBatch(n,chunks.length+attempt+1,chunks.length+2,questions.slice(-12).map(x=>x.question));
+  if(extra.error)return extra.error;
+  addUnique(extra.questions||[]);
  }
  if(questions.length!==count)return reply({
   ok:false,code:'INCOMPLETE_GENERATION',
-  message:count+'문제를 요청했지만 '+questions.length+'문제만 검증되었습니다. 문제 수를 채우지 못해 시작하지 않았습니다. 조금 뒤 다시 생성해 주세요.'
+  message:count+'문제를 요청했지만 '+questions.length+'문제만 검증됐습니다. 불완전한 모의시험은 시작하지 않았습니다. 문제 수를 줄이거나 다시 시도해 주세요.'
  },502);
- return reply({ok:true,questions,model,sourceBased:Boolean(input.useSource),remaining:rate.remaining,notice:'AI가 생성한 비공식 연습문제입니다. 정답·해설에 오류가 있을 수 있습니다.'});
+ return reply({ok:true,questions,model,sourceBased:Boolean(input.useSource),
+  sourceInfo:input.useSource?{name:fileName,characters:source.length}:null,
+  remaining:rate.remaining,notice:'AI 생성 비공식 연습문제입니다. 정답과 해설은 학습자료로 확인하세요.'});
 }
 export const _test={normalizeQuestions,clean};
