@@ -113,7 +113,7 @@ async function generate(e){e.preventDefault();if(loading)return;
    useSource:$('aqUseFile').checked,sourceText:$('aqUseFile').checked?sourceText:'',sourceName:$('aqUseFile').checked?fileName:'',weaknesses};
   const r=await fetch('/api/generate-quiz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const result=await r.json();if(!r.ok||!result.ok)throw Error(result.message||'AI 문제가 생성되지 않았습니다.');
-  if(!Array.isArray(result.questions)||!result.questions.length)throw Error('생성된 문제를 확인할 수 없습니다.');
+  if(!Array.isArray(result.questions)||result.questions.length!==body.count)throw Error('요청한 '+body.count+'문제가 모두 준비되지 않았습니다. 새로고침 후 다시 시도해 주세요.');
   status(`${result.questions.length}문제 생성 완료 · AI 문제는 비공식 연습용입니다.`);
   startSession(result.questions,c,topic,Boolean(body.useSource));
  }catch(err){status(err.message||'AI 호출에 실패했습니다.',true)}
