@@ -60,3 +60,16 @@ python -m http.server 8000
 - 시험 회차를 선택하면 접수일·필기일·실기일·발표일이 양식에 입력됩니다. 화면 아래 저장하기를 눌러 D-day 및 달력에 저장합니다.
 - 종목 코드가 확인된 일부 자격증부터 지원합니다. 다른 자격증은 공식 종목 목록 API 검증 이후 연결합니다.
 - Q-Net 공고의 실제 접수·시험 일정은 변동될 수 있으므로 반드시 공식 사이트에서 최종 확인하세요.
+
+
+## v1.6 — Gemini API 기반 AI 문제 생성
+- Cloudflare Workers AI 호출을 제거하고 Google Gemini REST generateContent API로 변경했습니다.
+- Cloudflare Pages > Settings > Variables and Secrets에서 Secret 이름 `GEMINI_API_KEY`를 추가하세요. Google AI Studio에서 Gemini API용 키를 발급받습니다.
+- 기본 모델: `gemini-3.5-flash-lite` (무료 이용 가능 여부와 할당량은 Google AI Studio의 프로젝트별 상태에 따름).
+- 필요하면 일반 텍스트 변수 `GEMINI_MODEL`을 지원되는 모델명으로 지정할 수 있습니다.
+- 기존 KV 바인딩 `QUIZ_RATE`는 유지합니다. 더 이상 Workers AI 바인딩 `AI`는 필수가 아닙니다.
+- 학습자료 파일은 브라우저에서 텍스트를 추출합니다. 요청 시 추출 텍스트의 일부가 Cloudflare 서버를 거쳐 Gemini에 전달되며 원본 파일 자체는 사이트 서버에 저장하지 않습니다.
+- Gemini **무료 등급에서는 입력/출력 콘텐츠가 Google 제품 개선에 사용될 수 있습니다.** 개인 정보·저작권상 전송이 허용되지 않는 자료는 업로드하지 마세요.
+- 요청 제한: 네트워크 기준 대략 하루 8회, 요청 후 1분 대기. Cloudflare KV 특성상 강한 사용자별 인증/요금 보호가 아닙니다.
+- 구동 테스트: API 키 설정·새 배포 이후 'AI 문제 풀이'에서 3문제를 생성하여 확인합니다.
+- Gemini API 오류를 인증(401/403), 한도(429), 모델(404), 서버/네트워크 및 응답 형식으로 구분하여 안내합니다.

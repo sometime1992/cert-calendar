@@ -1,5 +1,5 @@
 // Cloudflare Pages Function: Workers AI + optional KV rate limiter. No user-uploaded file is stored.
-const MODEL='@cf/meta/llama-3.1-8b-instruct';
+const MODEL='gemini-3.5-flash-lite';
 const QUESTION_SCHEMA={
  type:'object',additionalProperties:false,
  properties:{questions:{type:'array',items:{type:'object',additionalProperties:false,
@@ -42,7 +42,7 @@ async function reserveRate(env,request){
  return {remaining:7-prior.calls};
 }
 export async function onRequestPost({request,env}){
- if(!env.AI)return reply({ok:false,code:'AI_NOT_CONFIGURED',message:'Cloudflare Pages 설정에서 Workers AI 바인딩 이름을 AI로 등록해 주세요.'},503);
+ if(!env.GEMINI_API_KEY)return reply({ok:false,code:'GEMINI_KEY_MISSING',message:'Cloudflare Pages 설정 → 변수 및 비밀에 GEMINI_API_KEY를 Secret으로 등록해 주세요.'},503);
  const len=Number(request.headers.get('content-length')||0);
  if(len>45000)return reply({ok:false,code:'TOO_LARGE',message:'한 번에 보낼 수 있는 학습자료 분량을 초과했습니다.'},413);
  let input;try{input=await request.json();}catch{return reply({ok:false,message:'요청 데이터 형식을 확인해 주세요.'},400)}
@@ -71,16 +71,46 @@ export async function onRequestPost({request,env}){
    weaknesses?`복습할 약점: ${weaknesses}`:'',
    input.useSource?`참고자료 이름: ${fileName||'사용자 첨부자료'}\n<untrusted_study_material>\n${source}\n</untrusted_study_material>\n참고자료에서 핵심개념을 선택하여 유사 개념의 새로운 문제를 출제하세요.`:'첨부자료가 없으니 일반적인 과목 지식의 검증 가능한 개념만 사용하세요.'
  ].filter(Boolean).join('\n');
- let result;
+ const model=String(env.GEMINI_MODEL||MODEL).trim();
+ if(!/^gemini-[a-z0-9.-]{3,75}$/.test(model))return reply({ok:false,code:'GEMINI_MODEL_INVALID',message:'설정한 Gemini 모델 이름이 올바르지 않습니다.'},503);
+ const endpoint='https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent';
+ const requestBody={
+   systemInstruction:{parts:[{text:system}]},
+   contents:[{role:'user',parts:[{text:user}]}],
+   generationConfig:{responseMimeType:'application/json',responseJsonSchema:QUESTION_SCHEMA,maxOutputTokens:4096}
+ };
+ let response;
  try{
-  result=await env.AI.run(env.AI_MODEL||MODEL,{messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:2450,temperature:0.35,response_format:{type:'json_schema',json_schema:QUESTION_SCHEMA}});
- }catch(err){return reply({ok:false,code:'AI_UPSTREAM_ERROR',message:'AI 모델 응답에 실패했습니다. 무료 할당량 또는 모델 설정을 확인해 주세요.'},502)}
- let body=result?.response??result;
- if(typeof body==='string'){
-  try{body=JSON.parse(body)}catch{const match=body.match(/\{[\s\S]*\}/);try{body=JSON.parse(match?.[0]||'{}')}catch{body={}}}
+  response=await fetch(endpoint,{
+   method:'POST',
+   headers:{'Content-Type':'application/json','x-goog-api-key':String(env.GEMINI_API_KEY).trim()},
+   body:JSON.stringify(requestBody),
+   signal:AbortSignal.timeout(30000)
+  });
+ }catch(e){
+  return reply({ok:false,code:'GEMINI_NETWORK_ERROR',message:'Gemini API 연결이 지연되거나 실패했습니다. 잠시 후 다시 시도해 주세요.'},502);
  }
+ let payload;
+ try{payload=await response.json()}catch(_){return reply({ok:false,code:'GEMINI_RESPONSE_INVALID',message:'Gemini 서버 응답 형식을 읽을 수 없습니다.'},502)}
+ if(!response.ok){
+  const errorCode=response.status===429?'GEMINI_QUOTA_EXCEEDED':
+   [401,403].includes(response.status)?'GEMINI_AUTH_ERROR':
+   response.status===404?'GEMINI_MODEL_NOT_FOUND':
+   response.status===400?'GEMINI_BAD_REQUEST':'GEMINI_UPSTREAM_ERROR';
+  const errorMessage=response.status===429?'Gemini 무료 요청 한도에 도달했습니다. AI Studio에서 사용량을 확인하거나 나중에 다시 시도해 주세요.':
+   [401,403].includes(response.status)?'Gemini API 인증에 실패했습니다. AI Studio 키 및 해당 프로젝트의 API 사용 권한을 확인해 주세요.':
+   response.status===404?'선택된 Gemini 모델을 사용할 수 없습니다. GEMINI_MODEL 설정과 프로젝트의 모델 접근 권한을 확인해 주세요.':
+   response.status===400?'Gemini 요청 형식이 지원되지 않습니다. 서버 설정을 확인해 주세요.':
+   'Gemini 서버에서 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.';
+  return reply({ok:false,code:errorCode,message:errorMessage},response.status===429?429:502);
+ }
+ const candidate=payload?.candidates?.[0];
+ const answer=candidate?.content?.parts?.filter(p=>typeof p?.text==='string').map(p=>p.text).join('')||'';
+ if(!answer)return reply({ok:false,code:'GEMINI_EMPTY',message:'Gemini가 문제를 생성하지 못했습니다. 학습 주제나 문제 유형을 바꿔 주세요.'},502);
+ let body;
+ try{body=JSON.parse(answer)}catch(_){return reply({ok:false,code:'GEMINI_JSON_INVALID',message:'Gemini가 생성한 문제 형식이 올바르지 않습니다. 다시 시도해 주세요.'},502)}
  const questions=normalizeQuestions(body,count,type);
  if(questions.length<Math.min(2,count))return reply({ok:false,code:'BAD_GENERATION',message:'AI가 채점 가능한 문제를 충분히 생성하지 못했습니다. 다시 시도하거나 유형을 바꿔 주세요.'},502);
- return reply({ok:true,questions,model:env.AI_MODEL||MODEL,sourceBased:Boolean(input.useSource),remaining:rate.remaining,notice:'AI가 생성한 비공식 연습문제입니다. 정답·해설에 오류가 있을 수 있습니다.'});
+ return reply({ok:true,questions,model,sourceBased:Boolean(input.useSource),remaining:rate.remaining,notice:'AI가 생성한 비공식 연습문제입니다. 정답·해설에 오류가 있을 수 있습니다.'});
 }
 export const _test={normalizeQuestions,clean};

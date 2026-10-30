@@ -106,7 +106,7 @@ async function generate(e){e.preventDefault();if(loading)return;
  const topic=$('aqCustomTopic').value.trim()||$('aqSubject').value;
  if(!topic)return status('공부할 과목 또는 주제를 입력해 주세요.',true);
  if($('aqUseFile').checked&&sourceText.length<80)return status('학습자료 파일을 다시 선택해 주세요.',true);
- loading=true;$('aqGenerate').disabled=true;$('aqGenerate').textContent='문제 생성 중…';status('Cloudflare AI가 새로운 연습문제를 생성하고 있습니다.');
+ loading=true;$('aqGenerate').disabled=true;$('aqGenerate').textContent='문제 생성 중…';status('Gemini가 새로운 연습문제를 생성하고 있습니다.');
  try{
   const weaknesses=saved.wrong.filter(w=>w.certId===c.id).slice(0,5).map(w=>w.topic);
   const body={certName:c.name,stage:stage(c),subject:topic,type:$('aqType').value,difficulty:$('aqDifficulty').value,count:Number($('aqCount').value),
