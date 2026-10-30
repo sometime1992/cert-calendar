@@ -1,3 +1,4 @@
 export async function onRequestGet({env}){
- return Response.json({ok:true,configured:Boolean(env.DATA_GO_KR_API_KEY),officialSyncReady:false,source:'https://www.data.go.kr/data/15074408/openapi.do',message:'자격 관리 기능은 이용 가능합니다. 시험 일정 API는 명세·인증키 검증 후 활성화됩니다.'},{headers:{'Cache-Control':'no-store'}});
+ const configured=Boolean(env.DATA_GO_KR_API_KEY);
+ return Response.json({ok:true,configured,officialSyncReady:configured,source:'https://www.data.go.kr/data/15074408/openapi.do',message:configured?'인증키가 등록되어 있습니다. 자격증 찾기에서 공식 시험일정을 조회할 수 있습니다.':'Cloudflare에 DATA_GO_KR_API_KEY Secret을 등록해 주세요.'},{headers:{'Cache-Control':'no-store'}});
 }
