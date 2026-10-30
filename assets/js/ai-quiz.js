@@ -222,8 +222,8 @@ function finish(expired){
  $('aqNew').addEventListener('click',function(){$('aqSetup').scrollIntoView({behavior:'smooth'})});
  renderHistory();
 }
-function startSession(qs,c,topic,sourceBased,mode,fromReview){
- if(session&&!confirm('현재 진행 중인 연습을 종료하고 새로 시작할까요?'))return false;
+function startSession(qs,c,topic,sourceBased,mode,fromReview,skipConfirm){
+ if(session&&!skipConfirm&&!confirm('현재 진행 중인 연습을 종료하고 새로 시작할까요?'))return false;
  clearInterval(examClock);examClock=null;
  const selectedMode=mode==='exam'?'exam':'practice';
  session={
@@ -264,7 +264,7 @@ async function generate(e){
   if(!Array.isArray(result.questions)||result.questions.length!==count)throw Error('요청한 문제 수가 모두 생성되지 않았습니다. 다시 시도해 주세요.');
   const mode=$('aqMode').value;
   status(count+'문제 생성 완료 · '+(mode==='exam'?'모의시험':'연습 모드')+' 시작');
-  startSession(result.questions,c,topic,Boolean(body.useSource),mode,false);
+  startSession(result.questions,c,topic,Boolean(body.useSource),mode,false,true);
  }catch(err){status(err.message||'생성 실패',true)}
  finally{loading=false;$('aqGenerate').disabled=!data().certs.length;$('aqGenerate').textContent='✦ AI 연습문제 생성'}
 }
@@ -316,7 +316,6 @@ function renderHistory(){
  $('aqReviewAll')?.addEventListener('click',function(){
   const ws=wrong.slice(0,20);if(!ws.length)return;
   const cert=data().certs.find(c=>c.id===certId)||{id:certId,name:ws[0].certName};
-  fileName='';
   startSession(ws.map(w=>w.question),cert,'오답 복습',false,'practice',true);
  });
  $('aqWrong').querySelectorAll('[data-aq-review-one]').forEach(function(btn){
@@ -324,7 +323,6 @@ function renderHistory(){
    const w=wrong[Number(btn.dataset.aqReviewOne)];
    if(!w)return;
    const cert=data().certs.find(c=>c.id===certId)||{id:certId,name:w.certName};
-   fileName='';
    startSession([w.question],cert,'오답 복습',false,'practice',true);
   })
  });
