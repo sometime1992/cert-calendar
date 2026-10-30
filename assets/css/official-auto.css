@@ -44,3 +44,6 @@
  .cert-stage-rounds.auto-schedule-block{padding:12px}
  .cert-stage-details>.form-actions{bottom:-21px}
 }
+
+/* Auto-filled qualification identity remains in form data, but no redundant edit fields. */
+.cert-stage-details [hidden]{display:none!important}

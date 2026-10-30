@@ -1,11 +1,11 @@
 (()=>{
 'use strict';
 const CODES={
- '정보처리기사':{code:'1320',level:'기사'},
- '정보처리산업기사':{code:'2290',level:'산업기사'},
- '전기기사':{code:'1150',level:'기사'},
- '전기기능사':{code:'7780',level:'기능사'},
- '한식조리기능사':{code:'7910',level:'기능사'}
+ '정보처리기사':{code:'1320',level:'기사',field:'정보통신'},
+ '정보처리산업기사':{code:'2290',level:'산업기사',field:'정보통신'},
+ '전기기사':{code:'1150',level:'기사',field:'전기·전자'},
+ '전기기능사':{code:'7780',level:'기능사',field:'전기·전자'},
+ '한식조리기능사':{code:'7910',level:'기능사',field:'서비스'}
 };
 const $=id=>document.getElementById(id);
 const safe=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -14,6 +14,16 @@ let activeRequest=0;
 function setStatus(node,text,error){node.textContent=text;node.style.color=error?'#b42332':'#526482'}
 function addLine(host,label,begin,end){const row=document.createElement('div');row.className='auto-detail-line';const a=document.createElement('span');a.textContent=label;const b=document.createElement('strong');b.textContent=fmt(begin,end);row.append(a,b);host.append(row)}
 function setup(form,details){
+ function setSelectedIdentity() {
+   const selected=$('autoCertName')?.value, spec=CODES[selected];
+   if(!spec)return;
+   const name=form.querySelector('[name="name"]');
+   const level=form.querySelector('[name="level"]');
+   const field=form.querySelector('[name="field"]');
+   if(name)name.value=selected;
+   if(level)level.value=spec.level;
+   if(field)field.value=spec.field;
+ }
  const box=document.createElement('section');box.className='auto-schedule-block';
  const thisYear=new Date().getFullYear();
  const opts=Object.entries(CODES).map(([name,value])=>'<option value="'+safe(name)+'">'+safe(name)+'</option>').join('');
@@ -58,13 +68,22 @@ function setup(form,details){
   }
  }
  function showDetails(item){
+  const officialSelected=Boolean(item)||Boolean($('officialAutoMetadata')?.value&&CODES[$('autoCertName')?.value]);
+  if(item)setSelectedIdentity();
+  // Keep the auto-filled values in the form for saving without duplicate inputs.
+  const nameGroup=form.querySelector('#certName')?.closest('.field-group');
+  const gradeFieldGroup=form.querySelector('#certLevel')?.closest('.form-2');
+  if(nameGroup)nameGroup.hidden=officialSelected;
+  if(gradeFieldGroup)gradeFieldGroup.hidden=officialSelected;
   box.hidden=true;detailsStage.hidden=false;
   $('modalTitle').textContent='자격증 상세 정보';
   const match=CODES[$('autoCertName').value];
   $('certRoundHeading').textContent=item ?
     ($('autoCertName').value+' · '+(item.year||$('autoYear').value)+'년 제'+(item.round||'?')+'회') :
     (form.querySelector('[name="name"]')?.value||'나의 자격증');
-  $('certStepHint').textContent=item?'공식 날짜가 입력됐어요. 메모와 세부 정보를 확인하고 저장하세요.':'정보를 확인하고 저장하세요.';
+  $('certStepHint').textContent=officialSelected?
+    '자격증·등급·분야는 자동 설정됐어요. 일정 확인 후 메모만 추가해 저장하세요.':
+    '자격증 정보와 날짜를 직접 입력하고 저장하세요.';
   const hint=detailsStage.querySelector('.hint');
   if(hint&&!hint.closest('.cert-date-editor'))hint.textContent=item?
    '공공데이터에서 가져온 날짜입니다. 필요하면 수정할 수 있으며 접수 전 Q-Net 공고를 확인하세요.':
@@ -79,7 +98,7 @@ function setup(form,details){
  detailsStage.querySelector('#certReturnRounds').addEventListener('click',showRounds);
  manualBtn.addEventListener('click',()=>{
   const chosen=CODES[$('autoCertName').value];
-  if(chosen){form.querySelector('[name="name"]').value=$('autoCertName').value;form.querySelector('[name="level"]').value=chosen.level}
+  if(chosen)setSelectedIdentity()
   $('officialAutoMetadata').value='';showDetails(null);dateFields.open=true;
  });
  form.querySelectorAll('[name="regDate"],[name="examDate"],[name="practicalRegDate"],[name="practicalExamDate"],[name="resultDate"]').forEach(n=>n.addEventListener('change',refreshSummary));
@@ -91,6 +110,7 @@ function setup(form,details){
   const valueMap={regDate:item.docRegStartDt,examDate:item.docExamStartDt,practicalRegDate:item.pracRegStartDt,practicalExamDate:item.pracExamStartDt,resultDate:item.pracPassDt||item.docPassDt};
   if(!Object.values(valueMap).some(Boolean)){setStatus(status,'이 회차에는 입력할 수 있는 날짜가 없습니다.',true);return}
   for(const [k,v] of Object.entries(valueMap)){const target=form.querySelector('[name="'+k+'"]');if(target){target.value=v||'';target.dispatchEvent(new Event('change',{bubbles:true}))}}
+  setSelectedIdentity();
   const entry=CODES[select.value];
   $('officialAutoMetadata').value=JSON.stringify({year:String(year.value),round:String(item.round||''),jmCd:entry.code,source:'https://www.data.go.kr/data/15074408/openapi.do',importedAt:new Date().toISOString(),endDates:{docRegEndDt:item.docRegEndDt||'',docExamEndDt:item.docExamEndDt||'',pracRegEndDt:item.pracRegEndDt||'',pracExamEndDt:item.pracExamEndDt||''}});
   results.querySelectorAll('.auto-round').forEach(x=>x.classList.remove('chosen'));
@@ -128,7 +148,7 @@ function setup(form,details){
   }catch(e){if($('certForm')===form&&seq===activeRequest)setStatus(status,'조회 실패: '+String(e.message||e),true)}
   finally{if($('certForm')===form&&seq===activeRequest)button.disabled=false}
  }
- select.addEventListener('change',()=>{++activeRequest;results.replaceChildren();$('officialAutoMetadata').value='';if(select.value){$('certName').value=select.value;$('certLevel').value=CODES[select.value].level;lookup()}else setStatus(status,'자격증을 먼저 선택하세요.')});
+ select.addEventListener('change',()=>{++activeRequest;results.replaceChildren();$('officialAutoMetadata').value='';if(select.value){setSelectedIdentity();lookup()}else setStatus(status,'자격증을 먼저 선택하세요.')});
  year.addEventListener('change',()=>{++activeRequest;results.replaceChildren();$('officialAutoMetadata').value='';if(select.value)lookup()});
  button.addEventListener('click',lookup);
  // Existing certificates should open directly in edit mode and keep their official metadata.
