@@ -74,7 +74,7 @@ function renderOverview(c,s){const p=progress(s,c.id),todayP=dayProgress(s,c.id)
  </section>
  <section class="cw-panel"><div class="cw-section-head"><div><h3>오늘의 공부</h3><p>할 일을 완료하면 진행률에 반영됩니다.</p></div><button data-cw-view="planner" class="cw-link">계획 만들기 →</button></div>
  ${now.length?now.map(t=>`<label class="cw-task"><input type="checkbox" data-cw-check="${safe(t.id)}" ${t.done?'checked':''}><span>${safe(t.text)}<small>${fmt(t.date)}${t.minutes?` · 목표 ${t.minutes}분`:''}</small></span></label>`).join(''):'<div class="cw-empty">오늘 남은 학습 항목이 없습니다. 자동 학습 계획을 생성하거나 공부할 일을 추가하세요.</div>'}
- <div class="cw-actions"><button data-cw-view="planner" class="cw-primary">${p.total?'학습 계획 관리':'학습 계획 만들기'}</button><button data-cw-add-task="${safe(c.id)}" class="cw-secondary">할 일 직접 추가</button></div></section>
+ <div class="cw-actions"><button data-cw-ai="${safe(c.id)}" class="cw-secondary">✦ AI 문제 풀기</button><button data-cw-view="planner" class="cw-primary">${p.total?'학습 계획 관리':'학습 계획 만들기'}</button><button data-cw-add-task="${safe(c.id)}" class="cw-secondary">할 일 직접 추가</button></div></section>
  <section class="cw-panel"><div class="cw-section-head"><div><h3>시험 일정</h3><p>API에서 가져온 일정도 Q-Net에서 다시 확인해 주세요.</p></div><button data-cw-view="alerts" class="cw-link">전체 보기 →</button></div>
  ${activityList(c).length?activityList(c).slice(0,5).map(x=>`<div class="cw-date-row"><span>${safe(x.label)}</span><b>${fmt(x.date)}</b></div>`).join(''):'<div class="cw-empty">시험 일정이 아직 없습니다.</div>'}
  <button class="cw-text-button" data-cw-edit="${safe(c.id)}">자격증·시험일 수정</button></section>`;
@@ -179,6 +179,7 @@ function init(){ensureDialog();renderHome();openAlertPanel();
   const viewButton=e.target.closest('[data-cw-view]');if(viewButton){view=viewButton.dataset.cwView;render();return}
   const stage=e.target.closest('[data-cw-stage]');if(stage){if(stage.dataset.cwStage==='practical'&&!confirm('필기시험 합격 후 실기 준비로 전환하시겠습니까?'))return;
    bridge().mutate(s=>{const c=s.certs.find(x=>x.id===selectedId);if(c)c.studyStage=stage.dataset.cwStage});view='overview';render();return}
+  if(e.target.closest('[data-cw-ai]')){const id=selectedId;close();window.CertQuiz?.open(id);return}
   if(e.target.closest('[data-cw-add-task]')){const id=selectedId;close();bridge().openTask();requestAnimationFrame(()=>{const select=$('taskCert');if(select)select.value=id});return}
   if(e.target.closest('[data-cw-edit]')){const id=selectedId;close();bridge().openEdit(id);return}
   if(e.target.closest('[data-cw-remove-plan]')){if(!confirm('자동 생성된 계획만 삭제할까요? 직접 만든 할 일과 공부 기록은 유지합니다.'))return;
